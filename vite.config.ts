@@ -1,4 +1,4 @@
-import { defineConfig } from "vite";
+import { defineConfig } from "@tanstack/react-start/plugin/vite";
 
 export default defineConfig({
   tanstackStart: {
