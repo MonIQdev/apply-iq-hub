@@ -49,11 +49,6 @@ export const Route = createFileRoute("/api/tailor")({
           return json({ error: "AI is not configured on the server." }, 503);
         }
 
-        const aiGatewayUrl = process.env["AI_GATEWAY_URL"];
-        if (!aiGatewayUrl) {
-          return json({ error: "AI gateway URL is not configured on the server." }, 503);
-        }
-
         let parsed;
         try {
           parsed = bodySchema.parse(await request.json());
@@ -64,43 +59,48 @@ export const Route = createFileRoute("/api/tailor")({
           );
         }
 
-        const response = await fetch(aiGatewayUrl, {
-          method: "POST",
-          headers: {
-            authorization: `Bearer ${apiKey}`,
-            "content-type": "application/json",
+        const response = await fetch(
+          `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              contents: [
+                {
+                  role: "user",
+                  parts: [
+                    {
+                      text: `JOB DESCRIPTION:\n${parsed.jobDescription}\n\nCURRENT RESUME:\n${parsed.resume}`,
+                    },
+                  ],
+                },
+              ],
+              systemInstruction: {
+                parts: [
+                  {
+                    text: "You are ApplyIQ, an expert technical resume writer. Rewrite the candidate's resume so it targets the job description: mirror key terminology, quantify impact, keep every claim truthful, and never invent employers, dates or credentials. Return plain text with clear section headings and bullet points, then finish with a short 'Keywords added' line.",
+                  },
+                ],
+              },
+            }),
           },
-          body: JSON.stringify({
-            model: "google/gemini-2.5-flash",
-            messages: [
-              {
-                role: "system",
-                content:
-                  "You are ApplyIQ, an expert technical resume writer. Rewrite the candidate's resume so it targets the job description: mirror key terminology, quantify impact, keep every claim truthful, and never invent employers, dates or credentials. Return plain text with clear section headings and bullet points, then finish with a short 'Keywords added' line.",
-              },
-              {
-                role: "user",
-                content: `JOB DESCRIPTION:\n${parsed.jobDescription}\n\nCURRENT RESUME:\n${parsed.resume}`,
-              },
-            ],
-          }),
-        });
+        );
 
         if (response.status === 429) {
           return json({ error: "Rate limit reached. Please try again in a moment." }, 429);
         }
-        if (response.status === 402) {
-          return json({ error: "AI credits exhausted. Please top up to continue." }, 402);
+        if (response.status === 402 || response.status === 403) {
+          return json({ error: "AI credits exhausted or invalid API key." }, 402);
         }
         if (!response.ok) {
-          console.error("tailor: gateway error", response.status, await response.text());
+          console.error("tailor: gemini error", response.status, await response.text());
           return json({ error: "The AI service could not tailor your resume." }, 502);
         }
 
         const payload = (await response.json()) as {
-          choices?: { message?: { content?: string } }[];
+          candidates?: { content?: { parts?: { text?: string }[] } }[];
         };
-        const result = payload.choices?.[0]?.message?.content?.trim();
+        const result = payload.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (!result) {
           return json({ error: "The AI service returned an empty result." }, 502);
         }
